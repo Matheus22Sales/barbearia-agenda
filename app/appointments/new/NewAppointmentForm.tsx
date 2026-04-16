@@ -138,7 +138,7 @@ export default function NewAppointmentForm({
 
         if (!isMounted) return;
         setAvailableTimes(filtered);
-      } catch (err: any) {
+      } catch (err: { message?: string } | null | undefined) {
         if (!isMounted) return;
         setFormError(err?.message ?? "Erro ao carregar horários.");
       } finally {
@@ -212,7 +212,7 @@ export default function NewAppointmentForm({
       setDate("");
       setStartTime("");
       setAvailableTimes([]);
-    } catch (err: any) {
+    } catch (err: { message?: string } | null | undefined) {
       setFormError(err?.message ?? "Erro ao criar agendamento.");
     } finally {
       setSubmitting(false);

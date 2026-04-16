@@ -20,7 +20,24 @@ type Professional = {
 };
 
 // appointments: vamos usar select("*") então não precisa tipar perfeito
-type AppointmentRow = Record<string, any>;
+type AppointmentRow = {
+  time?: string | null;
+  start_time?: string | null;
+  hour?: string | null;
+};
+
+type AppointmentPayload = {
+  customer_name: string;
+  customer_phone: string | null;
+  service_id: string;
+  professional_id: string;
+  service: string;
+  professional_name: string;
+  date: string;
+  time: string;
+  start_time: string;
+  status: string;
+};
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -146,7 +163,7 @@ export default function NewAppointmentPage() {
 
         setServices(sArr);
         setProfessionals(pArr);
-      } catch (e: any) {
+      } catch (e: { message?: string } | null | undefined) {
         setError(e?.message ?? "Erro ao carregar dados.");
       } finally {
         setLoading(false);
@@ -200,7 +217,7 @@ export default function NewAppointmentPage() {
         });
 
         setTimes(slots);
-      } catch (e: any) {
+      } catch (e: { message?: string } | null | undefined) {
         setError(e?.message ?? "Erro ao carregar horários.");
       } finally {
         setTimesLoading(false);
@@ -220,7 +237,7 @@ export default function NewAppointmentPage() {
     if (!time) return setError("Selecione um horário.");
 
     // NÃO manda minutes porque appointments NÃO tem essa coluna
-    const payload: any = {
+    const payload: AppointmentPayload = {
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim() || null,
 
@@ -252,7 +269,7 @@ export default function NewAppointmentPage() {
       setDate("");
       setTime("");
       setTimes([]);
-    } catch (e: any) {
+    } catch (e: { message?: string } | null | undefined) {
       setError(e?.message ?? "Erro ao criar agendamento.");
     }
   }
