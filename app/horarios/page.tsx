@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   SERVICES,
@@ -9,8 +9,15 @@ import {
   CLOSE_HOUR,
   SLOT_STEP_MIN,
 } from "../lib/config";
-import { isSlotBlocked } from "../lib/bookings";
 import { formatDateShortBR } from "../lib/format";
+import { supabase } from "../lib/supabaseClient";
+
+type AppointmentRow = {
+  start_time?: string | null;
+  time?: string | null;
+  service_id?: string | null;
+  service?: string | null;
+};
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -35,6 +42,31 @@ function minutesToTime(mins: number) {
   return `${pad2(h)}:${pad2(m)}`;
 }
 
+function timeToMinutes(time: string) {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return fallback;
+}
+
+function inferDuration(row: AppointmentRow) {
+  const serviceId = (row.service_id ?? "").toLowerCase();
+  const serviceName = (row.service ?? "").toLowerCase();
+  const matchedService = SERVICES.find((service) => {
+    const currentId = service.id.toLowerCase();
+    return currentId === serviceId || service.dbId === serviceId || service.name.toLowerCase() === serviceName;
+  });
+
+  return matchedService?.minutes ?? 30;
+}
+
 export default function HorariosPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -55,15 +87,15 @@ export default function HorariosPage() {
 
   const [selectedDate, setSelectedDate] = useState<string>(days[0]?.iso ?? "");
   const [selectedProId, setSelectedProId] = useState<string>("");
-  const [selectedTime, setSelectedTime] = useState<string>("");
+  const [loadingTimes, setLoadingTimes] = useState(false);
+  const [bookedRanges, setBookedRanges] = useState<Array<{ start: number; end: number }>>([]);
+  const [timesError, setTimesError] = useState<string | null>(null);
 
   const durationMin = service?.minutes ?? 30;
 
   const slots = useMemo(() => {
     const openMin = OPEN_HOUR * 60;
     const closeMin = CLOSE_HOUR * 60;
-
-    // regra: agendamento precisa TERMINAR até CLOSE_HOUR
     const lastStart = closeMin - durationMin;
 
     const list: string[] = [];
@@ -72,6 +104,45 @@ export default function HorariosPage() {
     }
     return list;
   }, [durationMin]);
+
+  useEffect(() => {
+    async function loadAppointments() {
+      setBookedRanges([]);
+      setTimesError(null);
+
+      if (!selectedDate || !selectedProId) return;
+
+      setLoadingTimes(true);
+      try {
+        const { data, error } = await supabase
+          .from("appointments")
+          .select("start_time,time,service_id,service")
+          .eq("professional_id", selectedProId)
+          .eq("date", selectedDate);
+
+        if (error) throw error;
+
+        const ranges = ((data ?? []) as AppointmentRow[])
+          .map((row) => {
+            const rawTime = row.start_time ?? row.time ?? "";
+            if (!rawTime) return null;
+
+            const start = timeToMinutes(String(rawTime).slice(0, 5));
+            const end = start + inferDuration(row);
+            return { start, end };
+          })
+          .filter((value): value is { start: number; end: number } => Boolean(value));
+
+        setBookedRanges(ranges);
+      } catch (error) {
+        setTimesError(getErrorMessage(error, "Erro ao carregar horários."));
+      } finally {
+        setLoadingTimes(false);
+      }
+    }
+
+    void loadAppointments();
+  }, [selectedDate, selectedProId]);
 
   const selectedPro = PROFESSIONALS.find((p) => p.id === selectedProId);
   const canShowTimes = Boolean(service && selectedDate && selectedProId);
@@ -120,7 +191,6 @@ export default function HorariosPage() {
           </button>
         </div>
 
-        {/* DIA */}
         <section className="mt-10">
           <h2 className="text-xl font-semibold">Selecione o dia</h2>
 
@@ -138,7 +208,6 @@ export default function HorariosPage() {
                   ].join(" ")}
                   onClick={() => {
                     setSelectedDate(d.iso);
-                    setSelectedTime("");
                   }}
                 >
                   <div className="text-sm font-semibold">{d.label}</div>
@@ -148,7 +217,6 @@ export default function HorariosPage() {
           </div>
         </section>
 
-        {/* PROFISSIONAL */}
         <section className="mt-10">
           <h2 className="text-xl font-semibold">Selecione o profissional</h2>
 
@@ -166,7 +234,6 @@ export default function HorariosPage() {
                   ].join(" ")}
                   onClick={() => {
                     setSelectedProId(p.id);
-                    setSelectedTime("");
                   }}
                 >
                   <div className="text-lg font-semibold">{p.name}</div>
@@ -181,39 +248,37 @@ export default function HorariosPage() {
           </p>
         </section>
 
-        {/* HORÁRIOS */}
         <section className="mt-10">
-          <h2 className="text-xl font-semibold">Selecione o horário</h2>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-semibold">Selecione o horário</h2>
+            {loadingTimes && <span className="text-sm text-zinc-400">Carregando...</span>}
+          </div>
+
+          {timesError && (
+            <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+              {timesError}
+            </div>
+          )}
 
           <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {slots.map((time) => {
+              const slotStart = timeToMinutes(time);
+              const slotEnd = slotStart + durationMin;
               const blocked =
                 !canShowTimes ||
-                isSlotBlocked({
-                  proId: selectedProId,
-                  date: selectedDate,
-                  startTime: time,
-                  durationMin,
-                });
-
-              const active = time === selectedTime;
+                bookedRanges.some((range) => !(slotEnd <= range.start || slotStart >= range.end));
 
               return (
                 <button
                   key={time}
-                  disabled={blocked}
+                  disabled={blocked || loadingTimes}
                   className={[
                     "rounded-xl px-6 py-4 font-semibold transition",
-                    blocked
+                    blocked || loadingTimes
                       ? "bg-zinc-900 text-zinc-500 cursor-not-allowed"
-                      : active
-                      ? "bg-zinc-100 text-zinc-950"
                       : "bg-zinc-100 text-zinc-950 hover:bg-white",
                   ].join(" ")}
-                  onClick={() => {
-                    setSelectedTime(time);
-                    goConfirm(time);
-                  }}
+                  onClick={() => goConfirm(time)}
                 >
                   {time}
                 </button>
@@ -225,3 +290,4 @@ export default function HorariosPage() {
     </main>
   );
 }
+
