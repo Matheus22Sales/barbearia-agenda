@@ -60,12 +60,11 @@ export default function HomePage() {
                 {BUSINESS_NAME}
               </div>
               <h1 className="mt-3 text-4xl font-black tracking-tight text-zinc-50 sm:text-5xl">
-                Agende seu horario com valores, tempo e disponibilidade claros.
+                Agende sem ficar perguntando horario.
               </h1>
               <p className="mt-4 max-w-xl text-base leading-7 text-zinc-300 sm:text-lg">
-                Escolha o servico, veja os horarios realmente livres e finalize o
-                agendamento sem ficar preso a troca de mensagens para entender valores,
-                duracao e encaixes da agenda.
+                Escolha o servico, veja o valor e confirme com os horarios que
+                realmente estao livres.
               </p>
             </div>
 
@@ -97,7 +96,7 @@ export default function HomePage() {
               <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">Agendamento</div>
               <div className="mt-2 text-lg font-bold">{BUSINESS_BOOKING_LABEL}</div>
               <div className="mt-1 text-sm text-zinc-400">
-                Informacoes objetivas antes da confirmacao
+                Valor, tempo e horario sem ficar adivinhando
               </div>
             </div>
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 px-5 py-4">
@@ -117,8 +116,8 @@ export default function HomePage() {
                 </div>
               <h2 className="mt-2 text-3xl font-bold text-zinc-50">Escolha seu servico</h2>
               <p className="mt-3 max-w-2xl text-zinc-300">
-                A disponibilidade ja considera o tempo de cada servico, entao os horarios
-                exibidos depois fazem sentido para a agenda real.
+                Cada servico ja considera o tempo real do atendimento. Os proximos
+                horarios aparecem com base nisso.
               </p>
               </div>
               <div className="text-sm text-zinc-500">
@@ -227,8 +226,8 @@ export default function HomePage() {
             </div>
 
             <div className="mt-6 rounded-2xl border border-amber-400/15 bg-amber-500/8 p-5 text-sm leading-6 text-zinc-300">
-              Depois de escolher o servico, nos mostramos so horarios compativeis com a duracao
-              dele e com a agenda do profissional.
+              Depois de escolher o servico, mostramos so os horarios que fazem
+              sentido para a duracao e para a agenda do profissional.
             </div>
           </aside>
         </section>

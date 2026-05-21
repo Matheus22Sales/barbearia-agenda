@@ -3,7 +3,6 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  BUSINESS_NAME,
   OPEN_HOUR,
   CLOSE_HOUR,
   SLOT_STEP_MIN,
@@ -49,6 +48,27 @@ function timeToMinutes(time: string) {
   return h * 60 + m;
 }
 
+function getSaoPauloNowSnapshot() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const getPart = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+
+  return {
+    isoDate: `${getPart("year")}-${getPart("month")}-${getPart("day")}`,
+    currentMinutes: Number(getPart("hour")) * 60 + Number(getPart("minute")),
+  };
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) {
@@ -72,6 +92,7 @@ function inferDurationFromCatalog(services: Service[], row: AppointmentRow) {
 function HorariosPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const saoPauloNow = useMemo(() => getSaoPauloNowSnapshot(), []);
 
   const serviceId = (searchParams.get("service") ?? "").toLowerCase();
   const [services, setServices] = useState<Service[]>([]);
@@ -167,6 +188,15 @@ function HorariosPageContent() {
 
   const selectedPro = professionals.find((p) => p.id === selectedProId);
   const canShowTimes = Boolean(service && selectedDate && selectedProId && !catalogLoading);
+  const isSelectedDateToday = selectedDate === saoPauloNow.isoDate;
+  const visibleSlots = useMemo(
+    () =>
+      slots.filter((time) => {
+        if (!isSelectedDateToday) return true;
+        return timeToMinutes(time) > saoPauloNow.currentMinutes;
+      }),
+    [isSelectedDateToday, saoPauloNow.currentMinutes, slots],
+  );
 
   const goConfirm = (time: string) => {
     if (!service) {
@@ -200,14 +230,13 @@ function HorariosPageContent() {
                 Passo 2
               </div>
               <h1 className="mt-3 text-4xl font-black tracking-tight text-zinc-50 sm:text-5xl">
-                Escolha o melhor horario em {BUSINESS_NAME}.
+                Escolha o dia, o barbeiro e o horario.
               </h1>
               <p className="mt-4 text-base leading-7 text-zinc-300 sm:text-lg">
-                Servico selecionado:{" "}
+                Servico:{" "}
                 <span className="font-semibold text-zinc-100">
                   {service?.name ?? "Nao informado"}
-                </span>
-                . A agenda abaixo ja considera os bloqueios e horarios ocupados.
+                </span>. A agenda abaixo ja considera horarios ocupados e bloqueios.
               </p>
             </div>
 
@@ -224,7 +253,7 @@ function HorariosPageContent() {
           <div className="gold-panel-strong rounded-[28px] p-6 sm:p-8">
             <h2 className="text-2xl font-bold text-zinc-50">Selecione o dia</h2>
             <p className="mt-2 text-zinc-400">
-              Mostramos os proximos sete dias para acelerar o atendimento.
+              Voce pode agendar para hoje ou para os proximos dias.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3">
@@ -252,7 +281,7 @@ function HorariosPageContent() {
             <div className="mt-8 border-t border-zinc-800 pt-8">
               <h2 className="text-2xl font-bold text-zinc-50">Selecione o profissional</h2>
               <p className="mt-2 text-zinc-400">
-                A disponibilidade muda de acordo com o barbeiro escolhido.
+                Os horarios mudam de acordo com o barbeiro escolhido.
               </p>
 
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -292,7 +321,7 @@ function HorariosPageContent() {
             </div>
             <h2 className="mt-2 text-2xl font-bold text-zinc-50">Selecione o horario</h2>
             <p className="mt-2 text-zinc-400">
-              Horarios indisponiveis ja aparecem bloqueados para evitar conflito.
+              Horarios ocupados ou bloqueados ja aparecem indisponiveis.
             </p>
 
             {loadingTimes && (
@@ -330,8 +359,7 @@ function HorariosPageContent() {
 
             {!canShowTimes && (
               <div className="mt-5 rounded-2xl border border-amber-400/15 bg-amber-500/8 p-5 text-sm leading-6 text-zinc-300">
-                Primeiro escolha o dia e o profissional. Assim a disponibilidade ja aparece do
-                jeito certo, sem te fazer perder tempo.
+                Primeiro escolha o dia e o profissional para liberar os horarios.
               </div>
             )}
           </aside>
@@ -342,14 +370,14 @@ function HorariosPageContent() {
             <div>
               <h2 className="text-2xl font-bold text-zinc-50">Horarios disponiveis</h2>
               <p className="mt-2 text-zinc-400">
-                Toque em um horario livre para seguir para a confirmacao.
+                Toque em um horario livre para seguir.
               </p>
             </div>
             {loadingTimes && <span className="text-sm text-zinc-400">Carregando...</span>}
           </div>
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {slots.map((time) => {
+            {visibleSlots.map((time) => {
               const slotStart = timeToMinutes(time);
               const slotEnd = slotStart + durationMin;
               const blocked =
@@ -376,7 +404,8 @@ function HorariosPageContent() {
 
           {!loadingTimes &&
             canShowTimes &&
-            slots.every((time) => {
+            visibleSlots.length > 0 &&
+            visibleSlots.every((time) => {
               const slotStart = timeToMinutes(time);
               const slotEnd = slotStart + durationMin;
               return bookedRanges.some((range) => !(slotEnd <= range.start || slotStart >= range.end));
@@ -385,6 +414,12 @@ function HorariosPageContent() {
                 Nao existem horarios livres para esse servico com esse profissional nesta data.
               </div>
             )}
+
+          {!loadingTimes && canShowTimes && visibleSlots.length === 0 && (
+            <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950/55 px-5 py-4 text-zinc-300">
+              Os horarios de hoje ja passaram. Escolha outro dia para continuar.
+            </div>
+          )}
         </section>
       </div>
     </main>
@@ -405,7 +440,7 @@ export default function HorariosPage() {
                 Carregando horarios...
               </h1>
               <p className="mt-4 text-base leading-7 text-zinc-300">
-                Estamos preparando a disponibilidade mais atual para voce escolher o melhor encaixe.
+                Estamos buscando a disponibilidade mais atual para voce escolher.
               </p>
             </section>
           </div>

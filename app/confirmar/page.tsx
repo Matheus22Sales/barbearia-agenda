@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BUSINESS_NAME, type Professional, type Service } from "../lib/config";
+import { type Professional, type Service } from "../lib/config";
 import { findProfessionalByParam, findServiceByParam, getCatalog } from "../lib/catalog";
 import { formatDateShortBR, moneyBRL } from "../lib/format";
 import { supabase } from "../lib/supabaseClient";
@@ -151,10 +151,10 @@ function ConfirmarPageContent() {
                 Passo 3
               </div>
               <h1 className="mt-3 text-4xl font-black tracking-tight text-zinc-50 sm:text-5xl">
-                Confirme os dados do agendamento em {BUSINESS_NAME}.
+                Confira os dados antes de confirmar.
               </h1>
               <p className="mt-4 text-base leading-7 text-zinc-300 sm:text-lg">
-                Revise servico, profissional, data e horario antes de finalizar.
+                Revise servico, barbeiro, dia e horario antes de finalizar.
               </p>
             </div>
 
@@ -172,7 +172,7 @@ function ConfirmarPageContent() {
           <div className="gold-panel-strong rounded-[28px] p-6 sm:p-8">
             <h2 className="text-2xl font-bold text-zinc-50">Resumo do atendimento</h2>
             <p className="mt-2 text-zinc-400">
-              Esse resumo acompanha exatamente a escolha feita no passo anterior.
+              Esse e o resumo do horario que voce escolheu.
             </p>
 
             <div className="mt-8 grid gap-6 sm:grid-cols-2">
@@ -221,7 +221,7 @@ function ConfirmarPageContent() {
           <div className="gold-panel rounded-[28px] p-6 sm:p-8 lg:sticky lg:top-6 lg:self-start">
             <h2 className="text-2xl font-bold text-zinc-50">Dados do cliente</h2>
             <p className="mt-2 text-zinc-400">
-              Use o nome e o telefone para localizar ou confirmar o atendimento depois.
+              Preencha seus dados para concluir o agendamento.
             </p>
 
             <div className="mt-8 grid gap-4">
@@ -290,7 +290,7 @@ export default function ConfirmarPage() {
                 Carregando confirmacao...
               </h1>
               <p className="mt-4 text-base leading-7 text-zinc-300">
-                Estamos preparando o resumo do atendimento para voce revisar antes de concluir.
+                Estamos carregando o resumo do seu agendamento.
               </p>
             </section>
           </div>
