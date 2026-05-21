@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import {
   CLOSE_HOUR,
   OPEN_HOUR,
-  PROFESSIONALS,
-  SERVICES,
   SLOT_STEP_MIN,
+  type Professional,
+  type Service,
 } from "../lib/config";
+import { getCatalog } from "../lib/catalog";
 import { supabase } from "../lib/supabaseClient";
 
 type AppointmentRow = {
@@ -36,6 +37,38 @@ type BlockGroup = {
   start: string;
   end: string;
   totalSlots: number;
+};
+
+type ServiceFormState = {
+  dbId: string | null;
+  code: string;
+  name: string;
+  minutes: string;
+  price: string;
+  description: string;
+  active: boolean;
+};
+
+type ProfessionalFormState = {
+  id: string | null;
+  name: string;
+  active: boolean;
+};
+
+const EMPTY_SERVICE_FORM: ServiceFormState = {
+  dbId: null,
+  code: "",
+  name: "",
+  minutes: "30",
+  price: "",
+  description: "",
+  active: true,
+};
+
+const EMPTY_PROFESSIONAL_FORM: ProfessionalFormState = {
+  id: null,
+  name: "",
+  active: true,
 };
 
 function pad2(value: number) {
@@ -111,11 +144,11 @@ function inferEntryType(appointment: AppointmentRow): EntryType {
   return hasCustomer ? "booking" : "block";
 }
 
-function inferDuration(appointment: AppointmentRow) {
+function inferDuration(services: Service[], appointment: AppointmentRow) {
   const serviceId = (appointment.service_id ?? "").toLowerCase();
   const serviceName = (appointment.service ?? "").toLowerCase();
 
-  const matchedService = SERVICES.find((service) => {
+  const matchedService = services.find((service) => {
     const currentId = service.id.toLowerCase();
     return (
       currentId === serviceId ||
@@ -152,6 +185,17 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
+  const [services, setServices] = useState<Service[]>([]);
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [serviceForm, setServiceForm] = useState<ServiceFormState>(EMPTY_SERVICE_FORM);
+  const [professionalForm, setProfessionalForm] = useState<ProfessionalFormState>(
+    EMPTY_PROFESSIONAL_FORM
+  );
+  const [savingService, setSavingService] = useState(false);
+  const [savingProfessional, setSavingProfessional] = useState(false);
+  const [catalogFeedback, setCatalogFeedback] = useState<string | null>(null);
 
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [selectedProfessionalFilter, setSelectedProfessionalFilter] = useState("");
@@ -167,6 +211,21 @@ export default function AdminPage() {
   const [blockNote, setBlockNote] = useState("");
   const [blocking, setBlocking] = useState(false);
   const [blockFeedback, setBlockFeedback] = useState<string | null>(null);
+
+  async function loadCatalog(forceRefresh = false) {
+    setCatalogLoading(true);
+    setCatalogError(null);
+
+    try {
+      const catalog = await getCatalog(forceRefresh);
+      setServices(catalog.services);
+      setProfessionals(catalog.professionals);
+    } catch (loadError) {
+      setCatalogError(getErrorMessage(loadError, "Erro ao carregar catálogo."));
+    } finally {
+      setCatalogLoading(false);
+    }
+  }
 
   async function loadAppointments(date: string) {
     setLoading(true);
@@ -192,6 +251,10 @@ export default function AdminPage() {
 
   useEffect(() => {
     setIsAuthorized(sessionStorage.getItem("admin-authorized") === "true");
+  }, []);
+
+  useEffect(() => {
+    void loadCatalog();
   }, []);
 
   useEffect(() => {
@@ -275,7 +338,7 @@ export default function AdminPage() {
       const note = appointment.customer_name?.trim() || "Bloqueio manual";
       const service = appointment.service || "Bloqueio manual";
       const professionalName = appointment.professional_name || "Não informado";
-      const duration = inferDuration(appointment);
+      const duration = inferDuration(services, appointment);
       const end = minutesToTime(timeToMinutes(start) + duration);
 
       const previous = groups[groups.length - 1];
@@ -306,7 +369,7 @@ export default function AdminPage() {
     }
 
     return groups;
-  }, [blockedAppointments]);
+  }, [blockedAppointments, services]);
 
   const availableBlockSlots = useMemo(() => {
     if (!blockProfessionalId) return [];
@@ -318,7 +381,7 @@ export default function AdminPage() {
     const occupiedRanges = professionalAppointments.map((appointment) => {
       const rawTime = appointment.start_time ?? appointment.time ?? "";
       const start = timeToMinutes(String(rawTime).slice(0, 5));
-      return { start, end: start + inferDuration(appointment) };
+      return { start, end: start + inferDuration(services, appointment) };
     });
 
     return buildSlots(30).filter((slot) => {
@@ -326,7 +389,7 @@ export default function AdminPage() {
       const end = start + 30;
       return !occupiedRanges.some((range) => !(end <= range.start || start >= range.end));
     });
-  }, [blockProfessionalId, sortedAppointments]);
+  }, [blockProfessionalId, services, sortedAppointments]);
 
   const availableRangeDurations = useMemo(() => {
     if (!blockTime) return [];
@@ -428,6 +491,11 @@ export default function AdminPage() {
     setError(null);
     setBlockFeedback(null);
 
+    if (catalogLoading) {
+      setError("Ainda estamos carregando os profissionais. Tente novamente em alguns segundos.");
+      return;
+    }
+
     if (!blockProfessionalId) {
       setError("Selecione um profissional para bloquear o horário.");
       return;
@@ -438,7 +506,7 @@ export default function AdminPage() {
       return;
     }
 
-    const professional = PROFESSIONALS.find((item) => item.id === blockProfessionalId);
+    const professional = professionals.find((item) => item.id === blockProfessionalId);
     if (!professional) {
       setError("Profissional inválido para o bloqueio.");
       return;
@@ -519,6 +587,11 @@ export default function AdminPage() {
     setError(null);
     setBlockFeedback(null);
 
+    if (catalogLoading) {
+      setError("Ainda estamos carregando os profissionais. Tente novamente em alguns segundos.");
+      return;
+    }
+
     if (!blockProfessionalId) {
       setError("Selecione um profissional para bloquear o dia inteiro.");
       return;
@@ -529,7 +602,7 @@ export default function AdminPage() {
       return;
     }
 
-    const professional = PROFESSIONALS.find((item) => item.id === blockProfessionalId);
+    const professional = professionals.find((item) => item.id === blockProfessionalId);
     if (!professional) {
       setError("Profissional inválido para o bloqueio.");
       return;
@@ -567,6 +640,183 @@ export default function AdminPage() {
       setError(getErrorMessage(createError, "Erro ao bloquear o dia inteiro."));
     } finally {
       setBlocking(false);
+    }
+  }
+
+  function startServiceEdit(service?: Service) {
+    if (!service) {
+      setServiceForm(EMPTY_SERVICE_FORM);
+      return;
+    }
+
+    setServiceForm({
+      dbId: service.dbId,
+      code: service.code,
+      name: service.name,
+      minutes: String(service.minutes),
+      price: String(service.price),
+      description: service.description,
+      active: service.active,
+    });
+  }
+
+  function startProfessionalEdit(professional?: Professional) {
+    if (!professional) {
+      setProfessionalForm(EMPTY_PROFESSIONAL_FORM);
+      return;
+    }
+
+    setProfessionalForm({
+      id: professional.id,
+      name: professional.name,
+      active: professional.active,
+    });
+  }
+
+  async function handleSaveService(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCatalogError(null);
+    setCatalogFeedback(null);
+
+    const code = serviceForm.code.trim().toLowerCase();
+    const name = serviceForm.name.trim();
+    const description = serviceForm.description.trim();
+    const minutes = Number(serviceForm.minutes);
+    const price = Number(serviceForm.price.replace(",", "."));
+
+    if (!code || !name) {
+      setCatalogError("Preencha código e nome do serviço.");
+      return;
+    }
+
+    if (!Number.isFinite(minutes) || minutes < SLOT_STEP_MIN) {
+      setCatalogError("Defina uma duração válida para o serviço.");
+      return;
+    }
+
+    if (!Number.isFinite(price) || price < 0) {
+      setCatalogError("Defina um valor válido para o serviço.");
+      return;
+    }
+
+    setSavingService(true);
+
+    try {
+      const payload = {
+        code,
+        name,
+        minutes,
+        price,
+        description: description || null,
+        active: serviceForm.active,
+      };
+
+      const query = serviceForm.dbId
+        ? supabase.from("services").update(payload).eq("id", serviceForm.dbId)
+        : supabase.from("services").insert(payload);
+
+      const { error: saveError } = await query;
+      if (saveError) throw saveError;
+
+      setCatalogFeedback(
+        serviceForm.dbId ? "Serviço atualizado com sucesso." : "Serviço criado com sucesso."
+      );
+      setServiceForm(EMPTY_SERVICE_FORM);
+      await loadCatalog(true);
+    } catch (saveError) {
+      setCatalogError(getErrorMessage(saveError, "Erro ao salvar serviço."));
+    } finally {
+      setSavingService(false);
+    }
+  }
+
+  async function handleSaveProfessional(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCatalogError(null);
+    setCatalogFeedback(null);
+
+    const name = professionalForm.name.trim();
+    if (!name) {
+      setCatalogError("Preencha o nome do profissional.");
+      return;
+    }
+
+    setSavingProfessional(true);
+
+    try {
+      const payload = {
+        name,
+        active: professionalForm.active,
+      };
+
+      const query = professionalForm.id
+        ? supabase.from("professionals").update(payload).eq("id", professionalForm.id)
+        : supabase.from("professionals").insert(payload);
+
+      const { error: saveError } = await query;
+      if (saveError) throw saveError;
+
+      setCatalogFeedback(
+        professionalForm.id
+          ? "Profissional atualizado com sucesso."
+          : "Profissional criado com sucesso."
+      );
+      setProfessionalForm(EMPTY_PROFESSIONAL_FORM);
+      await loadCatalog(true);
+    } catch (saveError) {
+      setCatalogError(getErrorMessage(saveError, "Erro ao salvar profissional."));
+    } finally {
+      setSavingProfessional(false);
+    }
+  }
+
+  async function toggleServiceActive(service: Service) {
+    setCatalogError(null);
+    setCatalogFeedback(null);
+    setSavingService(true);
+
+    try {
+      const { error: updateError } = await supabase
+        .from("services")
+        .update({ active: !service.active })
+        .eq("id", service.dbId);
+
+      if (updateError) throw updateError;
+
+      setCatalogFeedback(
+        service.active ? "Serviço desativado com sucesso." : "Serviço ativado com sucesso."
+      );
+      await loadCatalog(true);
+    } catch (updateError) {
+      setCatalogError(getErrorMessage(updateError, "Erro ao atualizar serviço."));
+    } finally {
+      setSavingService(false);
+    }
+  }
+
+  async function toggleProfessionalActive(professional: Professional) {
+    setCatalogError(null);
+    setCatalogFeedback(null);
+    setSavingProfessional(true);
+
+    try {
+      const { error: updateError } = await supabase
+        .from("professionals")
+        .update({ active: !professional.active })
+        .eq("id", professional.id);
+
+      if (updateError) throw updateError;
+
+      setCatalogFeedback(
+        professional.active
+          ? "Profissional desativado com sucesso."
+          : "Profissional ativado com sucesso."
+      );
+      await loadCatalog(true);
+    } catch (updateError) {
+      setCatalogError(getErrorMessage(updateError, "Erro ao atualizar profissional."));
+    } finally {
+      setSavingProfessional(false);
     }
   }
 
@@ -739,9 +989,10 @@ export default function AdminPage() {
                   className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition hover:border-zinc-500 focus:border-zinc-400"
                   value={selectedProfessionalFilter}
                   onChange={(event) => setSelectedProfessionalFilter(event.target.value)}
+                  disabled={catalogLoading}
                 >
                   <option value="">Todos os profissionais</option>
-                  {PROFESSIONALS.map((professional) => (
+                  {professionals.map((professional) => (
                     <option key={professional.id} value={professional.id}>
                       {professional.name}
                     </option>
@@ -750,7 +1001,11 @@ export default function AdminPage() {
               </label>
 
               <div className="text-sm text-zinc-400">
-                {selectedDate ? formatDateBR(selectedDate) : "Selecione uma data"}
+                {catalogLoading
+                  ? "Carregando catalogo..."
+                  : selectedDate
+                    ? formatDateBR(selectedDate)
+                    : "Selecione uma data"}
               </div>
             </div>
           </div>
@@ -818,9 +1073,10 @@ export default function AdminPage() {
                 className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-4 text-zinc-100 outline-none transition hover:border-zinc-500 focus:border-zinc-400"
                 value={blockProfessionalId}
                 onChange={(event) => setBlockProfessionalId(event.target.value)}
+                disabled={catalogLoading}
               >
                 <option value="">Selecione...</option>
-                {PROFESSIONALS.map((professional) => (
+                {professionals.map((professional) => (
                   <option key={professional.id} value={professional.id}>
                     {professional.name}
                   </option>
@@ -922,6 +1178,317 @@ export default function AdminPage() {
               {blockFeedback}
             </div>
           )}
+        </section>
+
+        <section className="mt-6 rounded-3xl bg-zinc-900/60 p-6 ring-1 ring-zinc-800">
+          <div className="mb-5">
+            <h2 className="text-xl font-semibold">Catálogo da barbearia</h2>
+            <p className="mt-1 text-sm text-zinc-400">
+              Atualize serviços e profissionais sem abrir o código.
+            </p>
+          </div>
+
+          {catalogError && (
+            <div className="mb-4 rounded-xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+              {catalogError}
+            </div>
+          )}
+
+          {catalogFeedback && (
+            <div className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200">
+              {catalogFeedback}
+            </div>
+          )}
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <div className="rounded-2xl bg-zinc-950/60 p-5 ring-1 ring-zinc-800">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Serviços</h3>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Duração, preço e descrição do que aparece no site.
+                  </p>
+                </div>
+                <button
+                  className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700"
+                  type="button"
+                  onClick={() => startServiceEdit()}
+                >
+                  Novo serviço
+                </button>
+              </div>
+
+              <form className="grid gap-3" onSubmit={(event) => void handleSaveService(event)}>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-semibold text-zinc-300">Código</span>
+                    <input
+                      className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition focus:border-zinc-400"
+                      value={serviceForm.code}
+                      onChange={(event) =>
+                        setServiceForm((current) => ({ ...current, code: event.target.value }))
+                      }
+                      placeholder="corte-premium"
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="text-sm font-semibold text-zinc-300">Nome</span>
+                    <input
+                      className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition focus:border-zinc-400"
+                      value={serviceForm.name}
+                      onChange={(event) =>
+                        setServiceForm((current) => ({ ...current, name: event.target.value }))
+                      }
+                      placeholder="Corte premium"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-semibold text-zinc-300">Duração (min)</span>
+                    <input
+                      className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition focus:border-zinc-400"
+                      value={serviceForm.minutes}
+                      onChange={(event) =>
+                        setServiceForm((current) => ({ ...current, minutes: event.target.value }))
+                      }
+                      inputMode="numeric"
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="text-sm font-semibold text-zinc-300">Valor</span>
+                    <input
+                      className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition focus:border-zinc-400"
+                      value={serviceForm.price}
+                      onChange={(event) =>
+                        setServiceForm((current) => ({ ...current, price: event.target.value }))
+                      }
+                      placeholder="75"
+                      inputMode="decimal"
+                    />
+                  </label>
+                </div>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-semibold text-zinc-300">Descrição</span>
+                  <textarea
+                    className="min-h-[96px] rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition focus:border-zinc-400"
+                    value={serviceForm.description}
+                    onChange={(event) =>
+                      setServiceForm((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))
+                    }
+                    placeholder="Resumo curto do serviço"
+                  />
+                </label>
+
+                <label className="flex items-center gap-3 text-sm text-zinc-300">
+                  <input
+                    checked={serviceForm.active}
+                    onChange={(event) =>
+                      setServiceForm((current) => ({ ...current, active: event.target.checked }))
+                    }
+                    type="checkbox"
+                  />
+                  Serviço ativo no catálogo
+                </label>
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    className="rounded-xl bg-zinc-100 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={savingService}
+                    type="submit"
+                  >
+                    {savingService
+                      ? "Salvando..."
+                      : serviceForm.dbId
+                      ? "Atualizar serviço"
+                      : "Criar serviço"}
+                  </button>
+                  {serviceForm.dbId && (
+                    <button
+                      className="rounded-xl bg-zinc-800 px-4 py-3 font-semibold text-zinc-100 transition hover:bg-zinc-700"
+                      type="button"
+                      onClick={() => startServiceEdit()}
+                    >
+                      Cancelar edição
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              <div className="mt-5 space-y-3">
+                {services.map((service) => (
+                  <div
+                    key={service.dbId}
+                    className="grid gap-3 rounded-2xl bg-zinc-900/80 p-4 ring-1 ring-zinc-800 md:grid-cols-[1fr_auto]"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-semibold">{service.name}</div>
+                        <span className="rounded-full bg-zinc-800 px-2 py-1 text-xs uppercase tracking-[0.2em] text-zinc-300">
+                          {service.minutes} min
+                        </span>
+                        <span className="rounded-full bg-zinc-800 px-2 py-1 text-xs font-semibold text-zinc-300">
+                          R$ {service.price.toFixed(2).replace(".", ",")}
+                        </span>
+                        <span
+                          className={[
+                            "rounded-full px-2 py-1 text-xs font-semibold",
+                            service.active
+                              ? "bg-emerald-950/50 text-emerald-200"
+                              : "bg-zinc-800 text-zinc-400",
+                          ].join(" ")}
+                        >
+                          {service.active ? "Ativo" : "Inativo"}
+                        </span>
+                      </div>
+                      <div className="mt-2 text-sm text-zinc-500">Código: {service.code}</div>
+                      <div className="mt-2 text-sm text-zinc-300">{service.description}</div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <button
+                        className="rounded-xl bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700"
+                        type="button"
+                        onClick={() => startServiceEdit(service)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="rounded-xl bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={savingService}
+                        type="button"
+                        onClick={() => void toggleServiceActive(service)}
+                      >
+                        {service.active ? "Desativar" : "Ativar"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-zinc-950/60 p-5 ring-1 ring-zinc-800">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Profissionais</h3>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Controle quem aparece para agendamento e bloqueios.
+                  </p>
+                </div>
+                <button
+                  className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700"
+                  type="button"
+                  onClick={() => startProfessionalEdit()}
+                >
+                  Novo profissional
+                </button>
+              </div>
+
+              <form
+                className="grid gap-3"
+                onSubmit={(event) => void handleSaveProfessional(event)}
+              >
+                <label className="grid gap-2">
+                  <span className="text-sm font-semibold text-zinc-300">Nome</span>
+                  <input
+                    className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none transition focus:border-zinc-400"
+                    value={professionalForm.name}
+                    onChange={(event) =>
+                      setProfessionalForm((current) => ({ ...current, name: event.target.value }))
+                    }
+                    placeholder="Barbeiro 5"
+                  />
+                </label>
+
+                <label className="flex items-center gap-3 text-sm text-zinc-300">
+                  <input
+                    checked={professionalForm.active}
+                    onChange={(event) =>
+                      setProfessionalForm((current) => ({
+                        ...current,
+                        active: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  Profissional ativo no catálogo
+                </label>
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    className="rounded-xl bg-zinc-100 px-4 py-3 font-semibold text-zinc-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={savingProfessional}
+                    type="submit"
+                  >
+                    {savingProfessional
+                      ? "Salvando..."
+                      : professionalForm.id
+                      ? "Atualizar profissional"
+                      : "Criar profissional"}
+                  </button>
+                  {professionalForm.id && (
+                    <button
+                      className="rounded-xl bg-zinc-800 px-4 py-3 font-semibold text-zinc-100 transition hover:bg-zinc-700"
+                      type="button"
+                      onClick={() => startProfessionalEdit()}
+                    >
+                      Cancelar edição
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              <div className="mt-5 space-y-3">
+                {professionals.map((professional) => (
+                  <div
+                    key={professional.id}
+                    className="grid gap-3 rounded-2xl bg-zinc-900/80 p-4 ring-1 ring-zinc-800 md:grid-cols-[1fr_auto]"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-semibold">{professional.name}</div>
+                        <span
+                          className={[
+                            "rounded-full px-2 py-1 text-xs font-semibold",
+                            professional.active
+                              ? "bg-emerald-950/50 text-emerald-200"
+                              : "bg-zinc-800 text-zinc-400",
+                          ].join(" ")}
+                        >
+                          {professional.active ? "Ativo" : "Inativo"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <button
+                        className="rounded-xl bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700"
+                        type="button"
+                        onClick={() => startProfessionalEdit(professional)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="rounded-xl bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={savingProfessional}
+                        type="button"
+                        onClick={() => void toggleProfessionalActive(professional)}
+                      >
+                        {professional.active ? "Desativar" : "Ativar"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="mt-6 grid gap-4 md:grid-cols-4">

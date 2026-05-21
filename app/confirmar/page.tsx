@@ -1,9 +1,10 @@
-﻿"use client";
+"use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { SERVICES, PROFESSIONALS } from "../lib/config";
-import { formatDateShortBR } from "../lib/format";
+import { BUSINESS_NAME, type Professional, type Service } from "../lib/config";
+import { findProfessionalByParam, findServiceByParam, getCatalog } from "../lib/catalog";
+import { formatDateShortBR, moneyBRL } from "../lib/format";
 import { supabase } from "../lib/supabaseClient";
 import { trackBookingId } from "../lib/bookings";
 
@@ -33,7 +34,7 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-export default function ConfirmarPage() {
+function ConfirmarPageContent() {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -43,33 +44,58 @@ export default function ConfirmarPage() {
   const date = sp.get("date") ?? "";
   const time = sp.get("time") ?? "";
 
-  const service = SERVICES.find((s) => s.id === serviceId);
-  const pro =
-    PROFESSIONALS.find((p) => p.id === proId) ??
-    (proNameFromUrl
-      ? { id: proId || "pro-unknown", name: proNameFromUrl, active: true }
-      : null);
-
+  const [services, setServices] = useState<Service[]>([]);
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    async function loadCatalog() {
+      setCatalogLoading(true);
+      try {
+        const catalog = await getCatalog();
+        setServices(catalog.services);
+        setProfessionals(catalog.professionals);
+      } finally {
+        setCatalogLoading(false);
+      }
+    }
+
+    void loadCatalog();
+  }, []);
+
+  const service = useMemo(() => findServiceByParam(services, serviceId), [services, serviceId]);
+  const pro = useMemo(
+    () =>
+      findProfessionalByParam(professionals, proId) ??
+      (proNameFromUrl
+        ? { id: proId || "pro-unknown", name: proNameFromUrl, active: true }
+        : null),
+    [proId, proNameFromUrl, professionals],
+  );
+
   const handleConfirm = async () => {
     setError(null);
 
+    if (catalogLoading) {
+      setError("Ainda estamos carregando os dados do catalogo. Tente novamente em alguns segundos.");
+      return;
+    }
     if (!service) {
-      alert("Serviço inválido. Volte e selecione novamente.");
+      alert("Servico invalido. Volte e selecione novamente.");
       router.push("/");
       return;
     }
     if (!pro) {
-      alert("Profissional inválido. Volte e selecione novamente.");
+      alert("Profissional invalido. Volte e selecione novamente.");
       router.back();
       return;
     }
     if (!date || !time) {
-      alert("Faltou data ou horário. Volte e selecione novamente.");
+      alert("Faltou data ou horario. Volte e selecione novamente.");
       router.back();
       return;
     }
@@ -107,8 +133,7 @@ export default function ConfirmarPage() {
         trackBookingId(bookingId);
       }
 
-      alert("Agendamento confirmado!");
-      router.push("/meus-agendamentos");
+      router.push(`/meus-agendamentos?created=${encodeURIComponent(bookingId || "1")}`);
     } catch (submitError) {
       setError(getErrorMessage(submitError, "Erro ao confirmar agendamento."));
     } finally {
@@ -117,90 +142,162 @@ export default function ConfirmarPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto max-w-3xl px-6 py-12">
-        <h1 className="text-3xl font-bold">Confirmar agendamento</h1>
-        <p className="mt-3 text-zinc-300">Confira os dados e informe seus dados antes de confirmar.</p>
-
-        <div className="mt-8 rounded-2xl bg-zinc-900 p-8">
-          <div className="grid gap-6 sm:grid-cols-2">
-            <div>
-              <div className="text-sm text-zinc-400">Serviço</div>
-              <div className="text-lg font-semibold">
-                {service?.name ?? "não informado"}
+    <main className="min-h-screen text-zinc-100">
+      <div className="mx-auto max-w-5xl px-6 py-8 sm:py-10">
+        <header className="gold-panel rounded-[28px] px-6 py-6 sm:px-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+                Passo 3
               </div>
+              <h1 className="mt-3 text-4xl font-black tracking-tight text-zinc-50 sm:text-5xl">
+                Confirme os dados do agendamento em {BUSINESS_NAME}.
+              </h1>
+              <p className="mt-4 text-base leading-7 text-zinc-300 sm:text-lg">
+                Revise servico, profissional, data e horario antes de finalizar.
+              </p>
             </div>
 
-            <div>
-              <div className="text-sm text-zinc-400">Profissional</div>
-              <div className="text-lg font-semibold">
-                {pro?.name ?? "não informado"}
-              </div>
-            </div>
+            <button
+              className="rounded-2xl border border-zinc-700 bg-zinc-950/70 px-5 py-3 font-semibold text-zinc-100 hover:border-zinc-500 hover:bg-zinc-900"
+              onClick={() => router.back()}
+              disabled={submitting}
+            >
+              Voltar
+            </button>
+          </div>
+        </header>
 
-            <div>
-              <div className="text-sm text-zinc-400">Data</div>
-              <div className="text-lg font-semibold">
-                {date ? formatDateShortBR(date) : "não informado"}
-              </div>
-            </div>
+        <section className="mt-8 grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="gold-panel-strong rounded-[28px] p-6 sm:p-8">
+            <h2 className="text-2xl font-bold text-zinc-50">Resumo do atendimento</h2>
+            <p className="mt-2 text-zinc-400">
+              Esse resumo acompanha exatamente a escolha feita no passo anterior.
+            </p>
 
-            <div>
-              <div className="text-sm text-zinc-400">Horário</div>
-              <div className="text-lg font-semibold">
-                {time || "não informado"}
+            <div className="mt-8 grid gap-6 sm:grid-cols-2">
+              <div>
+                <div className="text-sm text-zinc-400">Servico</div>
+                <div className="text-lg font-semibold">
+                  {catalogLoading ? "Carregando..." : service?.name ?? "Nao informado"}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm text-zinc-400">Profissional</div>
+                <div className="text-lg font-semibold">
+                  {catalogLoading ? "Carregando..." : pro?.name ?? "Nao informado"}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm text-zinc-400">Data</div>
+                <div className="text-lg font-semibold">
+                  {date ? formatDateShortBR(date) : "Nao informado"}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm text-zinc-400">Horario</div>
+                <div className="text-lg font-semibold">{time || "Nao informado"}</div>
+              </div>
+
+              <div>
+                <div className="text-sm text-zinc-400">Duracao</div>
+                <div className="text-lg font-semibold">
+                  {catalogLoading ? "Carregando..." : service ? `${service.minutes} minutos` : "Nao informado"}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm text-zinc-400">Valor</div>
+                <div className="text-lg font-semibold">
+                  {catalogLoading ? "Carregando..." : service ? moneyBRL(service.price) : "Nao informado"}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="mt-8 grid gap-4">
-            <label className="grid gap-2">
-              <span className="text-sm text-zinc-300">Seu nome</span>
-              <input
-                className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
-                value={customerName}
-                onChange={(event) => setCustomerName(event.target.value)}
-                placeholder="Ex: Matheus"
-              />
-            </label>
+          <div className="gold-panel rounded-[28px] p-6 sm:p-8 lg:sticky lg:top-6 lg:self-start">
+            <h2 className="text-2xl font-bold text-zinc-50">Dados do cliente</h2>
+            <p className="mt-2 text-zinc-400">
+              Use o nome e o telefone para localizar ou confirmar o atendimento depois.
+            </p>
 
-            <label className="grid gap-2">
-              <span className="text-sm text-zinc-300">Telefone (opcional)</span>
-              <input
-                className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
-                value={customerPhone}
-                onChange={(event) => setCustomerPhone(event.target.value)}
-                placeholder="11999999999"
-              />
-            </label>
+            <div className="mt-8 grid gap-4">
+              <label className="grid gap-2">
+                <span className="text-sm text-zinc-300">Seu nome</span>
+                <input
+                  className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                  value={customerName}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  placeholder="Ex: Matheus"
+                />
+              </label>
+
+              <label className="grid gap-2">
+                <span className="text-sm text-zinc-300">Telefone (opcional)</span>
+                <input
+                  className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                  value={customerPhone}
+                  onChange={(event) => setCustomerPhone(event.target.value)}
+                  placeholder="11999999999"
+                />
+              </label>
+            </div>
+
+            {error && (
+              <div className="mt-6 rounded-2xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+                {error}
+              </div>
+            )}
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <button
+                className="rounded-2xl bg-zinc-100 px-5 py-3 font-semibold text-zinc-950 hover:bg-white transition disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300"
+                onClick={() => void handleConfirm()}
+                disabled={submitting || catalogLoading}
+              >
+                {submitting ? "Confirmando..." : "Confirmar agendamento"}
+              </button>
+
+              <button
+                className="rounded-2xl bg-zinc-900 px-5 py-3 font-semibold text-zinc-100 hover:bg-zinc-800 transition"
+                onClick={() => router.back()}
+                disabled={submitting}
+              >
+                Voltar
+              </button>
+            </div>
           </div>
-        </div>
-
-        {error && (
-          <div className="mt-6 rounded-xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-            {error}
-          </div>
-        )}
-
-        <div className="mt-8 flex gap-3">
-          <button
-            className="rounded-xl bg-zinc-100 px-5 py-3 font-semibold text-zinc-950 hover:bg-white transition disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300"
-            onClick={() => void handleConfirm()}
-            disabled={submitting}
-          >
-            {submitting ? "Confirmando..." : "Confirmar"}
-          </button>
-
-          <button
-            className="rounded-xl bg-zinc-900 px-5 py-3 font-semibold text-zinc-100 hover:bg-zinc-800 transition"
-            onClick={() => router.back()}
-            disabled={submitting}
-          >
-            Voltar
-          </button>
-        </div>
+        </section>
       </div>
     </main>
   );
 }
 
+export default function ConfirmarPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen text-zinc-100">
+          <div className="mx-auto max-w-5xl px-6 py-8 sm:py-10">
+            <section className="gold-panel rounded-[28px] px-6 py-10 sm:px-8">
+              <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+                Passo 3
+              </div>
+              <h1 className="mt-3 text-3xl font-black tracking-tight text-zinc-50 sm:text-4xl">
+                Carregando confirmacao...
+              </h1>
+              <p className="mt-4 text-base leading-7 text-zinc-300">
+                Estamos preparando o resumo do atendimento para voce revisar antes de concluir.
+              </p>
+            </section>
+          </div>
+        </main>
+      }
+    >
+      <ConfirmarPageContent />
+    </Suspense>
+  );
+}

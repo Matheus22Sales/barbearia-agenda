@@ -1,14 +1,16 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  SERVICES,
-  PROFESSIONALS,
+  BUSINESS_NAME,
   OPEN_HOUR,
   CLOSE_HOUR,
   SLOT_STEP_MIN,
+  type Professional,
+  type Service,
 } from "../lib/config";
+import { findServiceByParam, getCatalog } from "../lib/catalog";
 import { formatDateShortBR } from "../lib/format";
 import { supabase } from "../lib/supabaseClient";
 
@@ -56,10 +58,10 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function inferDuration(row: AppointmentRow) {
+function inferDurationFromCatalog(services: Service[], row: AppointmentRow) {
   const serviceId = (row.service_id ?? "").toLowerCase();
   const serviceName = (row.service ?? "").toLowerCase();
-  const matchedService = SERVICES.find((service) => {
+  const matchedService = services.find((service) => {
     const currentId = service.id.toLowerCase();
     return currentId === serviceId || service.dbId === serviceId || service.name.toLowerCase() === serviceName;
   });
@@ -67,12 +69,16 @@ function inferDuration(row: AppointmentRow) {
   return matchedService?.minutes ?? 30;
 }
 
-export default function HorariosPage() {
+function HorariosPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const serviceId = (searchParams.get("service") ?? "").toLowerCase();
-  const service = SERVICES.find((s) => s.id === serviceId);
+  const [services, setServices] = useState<Service[]>([]);
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+
+  const service = useMemo(() => findServiceByParam(services, serviceId), [services, serviceId]);
 
   const days = useMemo(() => {
     const base = new Date();
@@ -90,6 +96,21 @@ export default function HorariosPage() {
   const [loadingTimes, setLoadingTimes] = useState(false);
   const [bookedRanges, setBookedRanges] = useState<Array<{ start: number; end: number }>>([]);
   const [timesError, setTimesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadCatalog() {
+      setCatalogLoading(true);
+      try {
+        const catalog = await getCatalog();
+        setServices(catalog.services);
+        setProfessionals(catalog.professionals);
+      } finally {
+        setCatalogLoading(false);
+      }
+    }
+
+    void loadCatalog();
+  }, []);
 
   const durationMin = service?.minutes ?? 30;
 
@@ -128,7 +149,7 @@ export default function HorariosPage() {
             if (!rawTime) return null;
 
             const start = timeToMinutes(String(rawTime).slice(0, 5));
-            const end = start + inferDuration(row);
+            const end = start + inferDurationFromCatalog(services, row);
             return { start, end };
           })
           .filter((value): value is { start: number; end: number } => Boolean(value));
@@ -142,10 +163,10 @@ export default function HorariosPage() {
     }
 
     void loadAppointments();
-  }, [selectedDate, selectedProId]);
+  }, [selectedDate, selectedProId, services]);
 
-  const selectedPro = PROFESSIONALS.find((p) => p.id === selectedProId);
-  const canShowTimes = Boolean(service && selectedDate && selectedProId);
+  const selectedPro = professionals.find((p) => p.id === selectedProId);
+  const canShowTimes = Boolean(service && selectedDate && selectedProId && !catalogLoading);
 
   const goConfirm = (time: string) => {
     if (!service) {
@@ -170,31 +191,43 @@ export default function HorariosPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto max-w-5xl px-6 py-12">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">Escolha um horário</h1>
-            <p className="mt-2 text-zinc-300">
-              Serviço selecionado:{" "}
-              <span className="font-semibold text-zinc-100">
-                {service?.name ?? "não informado"}
-              </span>
-            </p>
+    <main className="min-h-screen text-zinc-100">
+      <div className="mx-auto max-w-6xl px-6 py-8 sm:py-10">
+        <header className="gold-panel rounded-[28px] px-6 py-6 sm:px-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+                Passo 2
+              </div>
+              <h1 className="mt-3 text-4xl font-black tracking-tight text-zinc-50 sm:text-5xl">
+                Escolha o melhor horario em {BUSINESS_NAME}.
+              </h1>
+              <p className="mt-4 text-base leading-7 text-zinc-300 sm:text-lg">
+                Servico selecionado:{" "}
+                <span className="font-semibold text-zinc-100">
+                  {service?.name ?? "Nao informado"}
+                </span>
+                . A agenda abaixo ja considera os bloqueios e horarios ocupados.
+              </p>
+            </div>
+
+            <button
+              className="rounded-2xl border border-zinc-700 bg-zinc-950/70 px-5 py-3 font-semibold text-zinc-100 hover:border-zinc-500 hover:bg-zinc-900"
+              onClick={() => router.push("/")}
+            >
+              Voltar
+            </button>
           </div>
+        </header>
 
-          <button
-            className="rounded-xl bg-zinc-900 px-5 py-3 font-semibold text-zinc-100 hover:bg-zinc-800 transition"
-            onClick={() => router.push("/")}
-          >
-            Voltar
-          </button>
-        </div>
+        <section className="mt-8 grid gap-8 lg:grid-cols-[1.25fr_0.75fr]">
+          <div className="gold-panel-strong rounded-[28px] p-6 sm:p-8">
+            <h2 className="text-2xl font-bold text-zinc-50">Selecione o dia</h2>
+            <p className="mt-2 text-zinc-400">
+              Mostramos os proximos sete dias para acelerar o atendimento.
+            </p>
 
-        <section className="mt-10">
-          <h2 className="text-xl font-semibold">Selecione o dia</h2>
-
-          <div className="mt-4 flex flex-wrap gap-3">
+            <div className="mt-5 flex flex-wrap gap-3">
             {days.map((d) => {
               const active = d.iso === selectedDate;
               return (
@@ -214,14 +247,16 @@ export default function HorariosPage() {
                 </button>
               );
             })}
-          </div>
-        </section>
+            </div>
 
-        <section className="mt-10">
-          <h2 className="text-xl font-semibold">Selecione o profissional</h2>
+            <div className="mt-8 border-t border-zinc-800 pt-8">
+              <h2 className="text-2xl font-bold text-zinc-50">Selecione o profissional</h2>
+              <p className="mt-2 text-zinc-400">
+                A disponibilidade muda de acordo com o barbeiro escolhido.
+              </p>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {PROFESSIONALS.map((p) => {
+              <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {professionals.map((p) => {
               const active = p.id === selectedProId;
               return (
                 <button
@@ -241,26 +276,79 @@ export default function HorariosPage() {
                 </button>
               );
             })}
+              </div>
+
+              <p className="mt-4 text-sm text-zinc-400">
+                {catalogLoading
+                  ? "Carregando profissionais..."
+                  : "Selecione o dia e o profissional para liberar os horarios."}
+              </p>
+            </div>
           </div>
 
-          <p className="mt-4 text-sm text-zinc-400">
-            Selecione o dia e o profissional para liberar os horários.
-          </p>
+          <aside className="gold-panel rounded-[28px] p-6 sm:p-8 lg:sticky lg:top-6 lg:self-start">
+            <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+              Resumo
+            </div>
+            <h2 className="mt-2 text-2xl font-bold text-zinc-50">Selecione o horario</h2>
+            <p className="mt-2 text-zinc-400">
+              Horarios indisponiveis ja aparecem bloqueados para evitar conflito.
+            </p>
+
+            {loadingTimes && (
+              <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950/55 px-4 py-3 text-sm text-zinc-400">
+                Carregando disponibilidade...
+              </div>
+            )}
+
+            {timesError && (
+              <div className="mt-5 rounded-2xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+                {timesError}
+              </div>
+            )}
+
+            <div className="mt-5 grid gap-4">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 p-5">
+                <div className="text-sm text-zinc-400">Servico</div>
+                <div className="mt-2 text-xl font-semibold">
+                  {catalogLoading ? "Carregando..." : service?.name ?? "Nao informado"}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 p-5">
+                <div className="text-sm text-zinc-400">Dia</div>
+                <div className="mt-2 text-xl font-semibold">
+                  {selectedDate ? formatDateShortBR(selectedDate) : "Selecione um dia"}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 p-5">
+                <div className="text-sm text-zinc-400">Profissional</div>
+                <div className="mt-2 text-xl font-semibold">
+                  {catalogLoading ? "Carregando..." : selectedPro?.name ?? "Selecione um profissional"}
+                </div>
+              </div>
+            </div>
+
+            {!canShowTimes && (
+              <div className="mt-5 rounded-2xl border border-amber-400/15 bg-amber-500/8 p-5 text-sm leading-6 text-zinc-300">
+                Primeiro escolha o dia e o profissional. Assim a disponibilidade ja aparece do
+                jeito certo, sem te fazer perder tempo.
+              </div>
+            )}
+          </aside>
         </section>
 
-        <section className="mt-10">
+        <section className="mt-8 gold-panel-strong rounded-[28px] p-6 sm:p-8">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-xl font-semibold">Selecione o horário</h2>
+            <div>
+              <h2 className="text-2xl font-bold text-zinc-50">Horarios disponiveis</h2>
+              <p className="mt-2 text-zinc-400">
+                Toque em um horario livre para seguir para a confirmacao.
+              </p>
+            </div>
             {loadingTimes && <span className="text-sm text-zinc-400">Carregando...</span>}
           </div>
 
-          {timesError && (
-            <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-              {timesError}
-            </div>
-          )}
-
-          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {slots.map((time) => {
               const slotStart = timeToMinutes(time);
               const slotEnd = slotStart + durationMin;
@@ -273,10 +361,10 @@ export default function HorariosPage() {
                   key={time}
                   disabled={blocked || loadingTimes}
                   className={[
-                    "rounded-xl px-6 py-4 font-semibold transition",
+                    "rounded-2xl px-6 py-4 font-semibold transition",
                     blocked || loadingTimes
                       ? "bg-zinc-900 text-zinc-500 cursor-not-allowed"
-                      : "bg-zinc-100 text-zinc-950 hover:bg-white",
+                      : "bg-zinc-100 text-zinc-950 hover:-translate-y-0.5 hover:bg-white",
                   ].join(" ")}
                   onClick={() => goConfirm(time)}
                 >
@@ -285,9 +373,47 @@ export default function HorariosPage() {
               );
             })}
           </div>
+
+          {!loadingTimes &&
+            canShowTimes &&
+            slots.every((time) => {
+              const slotStart = timeToMinutes(time);
+              const slotEnd = slotStart + durationMin;
+              return bookedRanges.some((range) => !(slotEnd <= range.start || slotStart >= range.end));
+            }) && (
+              <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950/55 px-5 py-4 text-zinc-300">
+                Nao existem horarios livres para esse servico com esse profissional nesta data.
+              </div>
+            )}
         </section>
       </div>
     </main>
+  );
+}
+
+export default function HorariosPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen text-zinc-100">
+          <div className="mx-auto max-w-6xl px-6 py-8 sm:py-10">
+            <section className="gold-panel rounded-[28px] px-6 py-10 sm:px-8">
+              <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+                Passo 2
+              </div>
+              <h1 className="mt-3 text-3xl font-black tracking-tight text-zinc-50 sm:text-4xl">
+                Carregando horarios...
+              </h1>
+              <p className="mt-4 text-base leading-7 text-zinc-300">
+                Estamos preparando a disponibilidade mais atual para voce escolher o melhor encaixe.
+              </p>
+            </section>
+          </div>
+        </main>
+      }
+    >
+      <HorariosPageContent />
+    </Suspense>
   );
 }
 

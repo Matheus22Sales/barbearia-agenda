@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { getCatalog } from "../../lib/catalog";
 import { supabase } from "../../lib/supabaseClient";
 
 type Service = {
@@ -8,7 +9,7 @@ type Service = {
   service_name?: string;
   name?: string;
   title?: string;
-  minutes?: number; // isso é na tabela services (pode existir)
+  minutes?: number;
   price?: number;
 };
 
@@ -19,7 +20,6 @@ type Professional = {
   title?: string;
 };
 
-// appointments: vamos usar select("*") então não precisa tipar perfeito
 type AppointmentRow = {
   time?: string | null;
   start_time?: string | null;
@@ -49,12 +49,12 @@ function toHHMM(totalMinutes: number) {
   return `${pad2(h)}:${pad2(m)}`;
 }
 
-function getServiceLabel(s: Service) {
-  return s.service_name ?? s.name ?? s.title ?? s.id;
+function getServiceLabel(service: Service) {
+  return service.service_name ?? service.name ?? service.title ?? service.id;
 }
 
-function getProfessionalLabel(p: Professional) {
-  return p.professional_name ?? p.name ?? p.title ?? p.id;
+function getProfessionalLabel(professional: Professional) {
+  return professional.professional_name ?? professional.name ?? professional.title ?? professional.id;
 }
 
 function buildSlots(opts: {
@@ -69,7 +69,6 @@ function buildSlots(opts: {
 
   const open = oh * 60 + om;
   const close = ch * 60 + cm;
-
   const slots: string[] = [];
 
   for (let t = open; t + opts.serviceMinutes <= close; t += opts.stepMinutes) {
@@ -82,37 +81,32 @@ function buildSlots(opts: {
 
 export default function NewAppointmentPage() {
   const [loading, setLoading] = useState(true);
-
   const [services, setServices] = useState<Service[]>([]);
   const [professionals, setProfessionals] = useState<Professional[]>([]);
-
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-
   const [serviceId, setServiceId] = useState("");
   const [professionalId, setProfessionalId] = useState("");
-
-  const [date, setDate] = useState(""); // YYYY-MM-DD
-  const [time, setTime] = useState(""); // HH:MM
-
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
   const [times, setTimes] = useState<string[]>([]);
   const [timesLoading, setTimesLoading] = useState(false);
-
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  // Ajuste se quiser
   const OPEN_HHMM = "09:00";
   const CLOSE_HHMM = "20:00";
   const STEP_MINUTES = 30;
 
-  const selectedService = useMemo(() => {
-    return services.find((s) => s.id === serviceId) || null;
-  }, [services, serviceId]);
+  const selectedService = useMemo(
+    () => services.find((service) => service.id === serviceId) || null,
+    [services, serviceId],
+  );
 
-  const selectedProfessional = useMemo(() => {
-    return professionals.find((p) => p.id === professionalId) || null;
-  }, [professionals, professionalId]);
+  const selectedProfessional = useMemo(
+    () => professionals.find((professional) => professional.id === professionalId) || null,
+    [professionals, professionalId],
+  );
 
   const serviceName = useMemo(() => {
     if (!selectedService) return "";
@@ -124,56 +118,54 @@ export default function NewAppointmentPage() {
     return getProfessionalLabel(selectedProfessional);
   }, [selectedProfessional]);
 
-  // Duração vem do SERVICES (não do APPOINTMENTS!)
   const serviceMinutes = useMemo(() => {
     if (!selectedService) return 30;
     if (typeof selectedService.minutes === "number") return selectedService.minutes;
 
-    const nm = getServiceLabel(selectedService).toLowerCase();
-    const match = nm.match(/(\d+)\s*min/);
+    const name = getServiceLabel(selectedService).toLowerCase();
+    const match = name.match(/(\d+)\s*min/);
     if (match) return Number(match[1]) || 30;
 
     return 30;
   }, [selectedService]);
 
-  // Carrega serviços e profissionais (SEM order no banco)
   useEffect(() => {
-    (async () => {
+    async function loadBaseData() {
       setLoading(true);
       setError(null);
 
       try {
-        const { data: sData, error: sErr } = await supabase
-          .from("services")
-          .select("*");
-        if (sErr) throw sErr;
-
-        const { data: pData, error: pErr } = await supabase
-          .from("professionals")
-          .select("*");
-        if (pErr) throw pErr;
-
-        const sArr = ((sData ?? []) as Service[]).slice().sort((a, b) =>
-          getServiceLabel(a).localeCompare(getServiceLabel(b), "pt-BR")
+        const catalog = await getCatalog();
+        setServices(
+          catalog.services.map((service) => ({
+            id: service.dbId,
+            service_name: service.name,
+            minutes: service.minutes,
+            price: service.price,
+          })),
         );
-
-        const pArr = ((pData ?? []) as Professional[]).slice().sort((a, b) =>
-          getProfessionalLabel(a).localeCompare(getProfessionalLabel(b), "pt-BR")
+        setProfessionals(
+          catalog.professionals.map((professional) => ({
+            id: professional.id,
+            professional_name: professional.name,
+          })),
         );
-
-        setServices(sArr);
-        setProfessionals(pArr);
-      } catch (e: { message?: string } | null | undefined) {
-        setError(e?.message ?? "Erro ao carregar dados.");
+      } catch (loadFailure) {
+        const message =
+          loadFailure && typeof loadFailure === "object" && "message" in loadFailure
+            ? String((loadFailure as { message?: unknown }).message ?? "Erro ao carregar dados.")
+            : "Erro ao carregar dados.";
+        setError(message);
       } finally {
         setLoading(false);
       }
-    })();
+    }
+
+    void loadBaseData();
   }, []);
 
-  // Carrega horários quando tiver (date + professional + service)
   useEffect(() => {
-    (async () => {
+    async function loadTimes() {
       setTimes([]);
       setTime("");
       setOk(null);
@@ -183,29 +175,26 @@ export default function NewAppointmentPage() {
 
       setTimesLoading(true);
       try {
-        // IMPORTANTÍSSIMO: select("*") para não quebrar por coluna inexistente
-        const { data, error: aErr } = await supabase
+        const { data, error: appointmentsError } = await supabase
           .from("appointments")
           .select("*")
           .eq("professional_id", professionalId)
           .eq("date", date);
 
-        if (aErr) throw aErr;
+        if (appointmentsError) throw appointmentsError;
 
         const rows = (data ?? []) as AppointmentRow[];
-
         const taken = new Set<string>();
 
-        for (const r of rows) {
-          // tenta pegar o horário de qualquer coluna que você tenha no banco
+        for (const row of rows) {
           const raw =
-            (typeof r.time === "string" && r.time) ||
-            (typeof r.start_time === "string" && r.start_time) ||
-            (typeof r.hour === "string" && r.hour) ||
+            (typeof row.time === "string" && row.time) ||
+            (typeof row.start_time === "string" && row.start_time) ||
+            (typeof row.hour === "string" && row.hour) ||
             "";
 
-          const t = raw ? String(raw).slice(0, 5) : "";
-          if (t) taken.add(t);
+          const current = raw ? String(raw).slice(0, 5) : "";
+          if (current) taken.add(current);
         }
 
         const slots = buildSlots({
@@ -217,51 +206,49 @@ export default function NewAppointmentPage() {
         });
 
         setTimes(slots);
-      } catch (e: { message?: string } | null | undefined) {
-        setError(e?.message ?? "Erro ao carregar horários.");
+      } catch (loadFailure) {
+        const message =
+          loadFailure && typeof loadFailure === "object" && "message" in loadFailure
+            ? String((loadFailure as { message?: unknown }).message ?? "Erro ao carregar horarios.")
+            : "Erro ao carregar horarios.";
+        setError(message);
       } finally {
         setTimesLoading(false);
       }
-    })();
+    }
+
+    void loadTimes();
   }, [date, professionalId, serviceId, serviceMinutes]);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
     setError(null);
     setOk(null);
 
     if (!customerName.trim()) return setError("Preencha o nome do cliente.");
-    if (!serviceId) return setError("Selecione um serviço.");
+    if (!serviceId) return setError("Selecione um servico.");
     if (!professionalId) return setError("Selecione um profissional.");
     if (!date) return setError("Selecione uma data.");
-    if (!time) return setError("Selecione um horário.");
+    if (!time) return setError("Selecione um horario.");
 
-    // NÃO manda minutes porque appointments NÃO tem essa coluna
     const payload: AppointmentPayload = {
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim() || null,
-
       service_id: serviceId,
       professional_id: professionalId,
-
-      // campos texto (pra não estourar NOT NULL de professional_name e etc)
       service: serviceName,
       professional_name: professionalName,
-
       date,
-
-      // mantém os dois porque teu schema pode ter um ou outro
       time,
       start_time: time,
-
       status: "scheduled",
     };
 
     try {
-      const { error: insErr } = await supabase.from("appointments").insert(payload);
-      if (insErr) throw insErr;
+      const { error: insertError } = await supabase.from("appointments").insert(payload);
+      if (insertError) throw insertError;
 
-      setOk("Agendamento criado com sucesso ✅");
+      setOk("Agendamento criado com sucesso.");
       setCustomerName("");
       setCustomerPhone("");
       setServiceId("");
@@ -269,161 +256,191 @@ export default function NewAppointmentPage() {
       setDate("");
       setTime("");
       setTimes([]);
-    } catch (e: { message?: string } | null | undefined) {
-      setError(e?.message ?? "Erro ao criar agendamento.");
+    } catch (createFailure) {
+      const message =
+        createFailure && typeof createFailure === "object" && "message" in createFailure
+          ? String((createFailure as { message?: unknown }).message ?? "Erro ao criar agendamento.")
+          : "Erro ao criar agendamento.";
+      setError(message);
     }
   }
 
-  if (loading) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>Novo agendamento</h2>
-        <p>Carregando...</p>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ padding: 24, maxWidth: 720 }}>
-      <h2>Novo agendamento</h2>
-      <p style={{ opacity: 0.8 }}>Página /appointments/new funcionando ✅</p>
-
-      {error && (
-        <div
-          style={{
-            border: "1px solid #ff6b6b",
-            background: "#ffecec",
-            color: "#b00020",
-            padding: 12,
-            borderRadius: 8,
-            marginBottom: 12,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {ok && (
-        <div
-          style={{
-            border: "1px solid #2ecc71",
-            background: "#eafff1",
-            color: "#0f6b2f",
-            padding: 12,
-            borderRadius: 8,
-            marginBottom: 12,
-          }}
-        >
-          {ok}
-        </div>
-      )}
-
-      <form onSubmit={handleCreate} style={{ display: "grid", gap: 12 }}>
-        <div>
-          <label>Nome do cliente</label>
-          <input
-            value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-            placeholder="Ex: Matheus"
-          />
-        </div>
-
-        <div>
-          <label>Telefone (opcional)</label>
-          <input
-            value={customerPhone}
-            onChange={(e) => setCustomerPhone(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-            placeholder="11999999999"
-          />
-        </div>
-
-        <div>
-          <label>Serviço</label>
-          <select
-            value={serviceId}
-            onChange={(e) => setServiceId(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-          >
-            <option value="">Selecione...</option>
-            {services.map((s) => (
-              <option key={s.id} value={s.id}>
-                {getServiceLabel(s)}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Profissional</label>
-          <select
-            value={professionalId}
-            onChange={(e) => setProfessionalId(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-          >
-            <option value="">Selecione...</option>
-            {professionals.map((p) => (
-              <option key={p.id} value={p.id}>
-                {getProfessionalLabel(p)}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Data</label>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-          />
-        </div>
-
-        <div>
-          <label>Horário</label>
-          <select
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-            disabled={!date || !serviceId || !professionalId || timesLoading}
-          >
-            <option value="">
-              {timesLoading
-                ? "Carregando horários..."
-                : !date || !serviceId || !professionalId
-                ? "Selecione data + serviço + profissional"
-                : times.length === 0
-                ? "Sem horários disponíveis"
-                : "Selecione..."}
-            </option>
-
-            {times.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-
-          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-            Duração do serviço: <b>{serviceMinutes} min</b> (horário é o <b>início</b>)
+    <main className="min-h-screen text-zinc-100">
+      <div className="mx-auto max-w-5xl px-6 py-8 sm:py-10">
+        <header className="gold-panel rounded-[28px] px-6 py-6 sm:px-8">
+          <div className="max-w-2xl">
+            <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+              Operacao interna
+            </div>
+            <h1 className="mt-3 text-4xl font-black tracking-tight text-zinc-50 sm:text-5xl">
+              Criacao manual de agendamentos.
+            </h1>
+            <p className="mt-4 text-base leading-7 text-zinc-300 sm:text-lg">
+              Use esta tela para cadastrar agendamentos diretamente no sistema quando precisar
+              montar a agenda sem passar pelo fluxo publico.
+            </p>
           </div>
-        </div>
+        </header>
 
-        <button
-          type="submit"
-          style={{
-            padding: 12,
-            borderRadius: 10,
-            border: "none",
-            cursor: "pointer",
-            fontWeight: 700,
-          }}
-        >
-          Criar agendamento
-        </button>
-      </form>
-    </div>
+        {error && (
+          <div className="mt-6 rounded-2xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+            {error}
+          </div>
+        )}
+
+        {ok && (
+          <div className="mt-6 rounded-2xl border border-emerald-500/40 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200">
+            {ok}
+          </div>
+        )}
+
+        <section className="mt-8 grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="gold-panel-strong rounded-[28px] p-6 sm:p-8">
+            <h2 className="text-2xl font-bold text-zinc-50">Novo agendamento</h2>
+            <p className="mt-2 text-zinc-400">
+              Selecione servico, profissional, data e horario para registrar o atendimento.
+            </p>
+
+            {loading ? (
+              <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/55 px-5 py-4 text-zinc-300">
+                Carregando dados base...
+              </div>
+            ) : (
+              <form onSubmit={handleCreate} className="mt-8 grid gap-4">
+                <label className="grid gap-2">
+                  <span className="text-sm text-zinc-300">Nome do cliente</span>
+                  <input
+                    value={customerName}
+                    onChange={(event) => setCustomerName(event.target.value)}
+                    className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                    placeholder="Ex: Matheus"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm text-zinc-300">Telefone (opcional)</span>
+                  <input
+                    value={customerPhone}
+                    onChange={(event) => setCustomerPhone(event.target.value)}
+                    className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                    placeholder="11999999999"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm text-zinc-300">Servico</span>
+                  <select
+                    value={serviceId}
+                    onChange={(event) => setServiceId(event.target.value)}
+                    className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                  >
+                    <option value="">Selecione...</option>
+                    {services.map((service) => (
+                      <option key={service.id} value={service.id}>
+                        {getServiceLabel(service)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm text-zinc-300">Profissional</span>
+                  <select
+                    value={professionalId}
+                    onChange={(event) => setProfessionalId(event.target.value)}
+                    className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                  >
+                    <option value="">Selecione...</option>
+                    {professionals.map((professional) => (
+                      <option key={professional.id} value={professional.id}>
+                        {getProfessionalLabel(professional)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm text-zinc-300">Data</span>
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(event) => setDate(event.target.value)}
+                      className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500"
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="text-sm text-zinc-300">Horario</span>
+                    <select
+                      value={time}
+                      onChange={(event) => setTime(event.target.value)}
+                      disabled={!date || !serviceId || !professionalId || timesLoading}
+                      className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-zinc-100 outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:text-zinc-500"
+                    >
+                      <option value="">
+                        {timesLoading
+                          ? "Carregando horarios..."
+                          : !date || !serviceId || !professionalId
+                            ? "Selecione data + servico + profissional"
+                            : times.length === 0
+                              ? "Sem horarios disponiveis"
+                              : "Selecione..."}
+                      </option>
+                      {times.map((current) => (
+                        <option key={current} value={current}>
+                          {current}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  className="mt-2 rounded-2xl bg-zinc-100 px-5 py-3 font-semibold text-zinc-950 hover:bg-white transition"
+                >
+                  Criar agendamento
+                </button>
+              </form>
+            )}
+          </div>
+
+          <aside className="gold-panel rounded-[28px] p-6 sm:p-8">
+            <div className="gold-accent-text text-xs font-semibold uppercase tracking-[0.28em]">
+              Resumo
+            </div>
+            <h2 className="mt-2 text-2xl font-bold text-zinc-50">Contexto do cadastro</h2>
+
+            <div className="mt-6 grid gap-4">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 p-5">
+                <div className="text-sm text-zinc-400">Servico escolhido</div>
+                <div className="mt-2 text-xl font-semibold">
+                  {serviceName || "Selecione um servico"}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 p-5">
+                <div className="text-sm text-zinc-400">Profissional</div>
+                <div className="mt-2 text-xl font-semibold">
+                  {professionalName || "Selecione um profissional"}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/55 p-5">
+                <div className="text-sm text-zinc-400">Duracao</div>
+                <div className="mt-2 text-xl font-semibold">{serviceMinutes} minutos</div>
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-amber-400/15 bg-amber-500/8 p-5 text-sm leading-6 text-zinc-300">
+              Esta tela e util para lancamento manual, encaixes ou organizacao interna quando a
+              barbearia quiser registrar um horario sem usar o fluxo publico.
+            </div>
+          </aside>
+        </section>
+      </div>
+    </main>
   );
 }

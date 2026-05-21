@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Barbearia Golden
 
-## Getting Started
+Sistema de agendamento online para barbearia, com fluxo publico para clientes e painel admin para controle de agenda e bloqueios.
 
-First, run the development server:
+## Funcionalidades
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- selecao de servico
+- escolha de profissional
+- horarios calculados com base na disponibilidade real
+- confirmacao de agendamento
+- pagina de meus agendamentos
+- painel admin com senha
+- bloqueio por horario, periodo e dia inteiro
+- filtro por data e barbeiro no admin
+
+## Rodando localmente
+
+No PowerShell:
+
+```powershell
+npm.cmd install
+npm.cmd run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abrir no navegador:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Admin:
 
-## Learn More
+```text
+http://localhost:3000/admin
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Variaveis de ambiente
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Crie um `.env.local` com:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+ADMIN_PASSWORD=
+```
 
-## Deploy on Vercel
+Pode usar o arquivo [`.env.example`](./.env.example) como base.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Producao
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Build:
+
+```powershell
+npm.cmd run build
+```
+
+Em maquinas com OneDrive, pode ser necessario validar o build fora da pasta sincronizada, porque o Windows as vezes trava os artefatos gerados pelo Next.
+
+## Entrega
+
+Veja o arquivo [ENTREGA.md](./ENTREGA.md) para:
+
+- handoff para cliente
+- Supabase em teste vs producao
+- senha do admin
+- checklist de entrega
+- fluxo recomendado de Git
+
+## Deploy
+
+Veja o arquivo [DEPLOY.md](./DEPLOY.md) para:
+
+- publicar na Vercel
+- configurar variaveis de ambiente
+- entender o impacto do Supabase Free vs Pro
